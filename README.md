@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-![Usage Example](assets/UsageExample.png){width=50%}
+![Usage Example](assets/UsageExample.png)
 
 A powerful, seamless AI tracking and segmentation plugin for [CVAT](https://cvat.ai/) (Computer Vision Annotation Tool), powered by Meta's state-of-the-art **SAM 3 (Segment Anything Model 3) Video Tracker**. 
 
