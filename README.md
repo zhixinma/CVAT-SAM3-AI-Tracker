@@ -10,10 +10,11 @@ This tool bridges the gap between CVAT's web UI and local AI models, allowing yo
 
 ## ✨ Key Features
 
-* 🎯 **Smart Object Selection:** The UI automatically fetches your CVAT job labels and intelligently listens to your active selections in the CVAT sidebar, switching the target object seamlessly.
 * 🎬 **Range Propagation:** Track an object from a `Start` frame to an `End` frame. The backend engine automatically assigns independent tracking sessions to handle multiple instances, disjointed polygons, and occlusions without memory crashes.
 * 🔍 **Text-to-Mask (Text Prompting):** Segment objects on your **current frame** using natural language prompts (e.g., "white hat"). 
+* 🎯 **Smart Object Selection:** The UI automatically fetches your CVAT job labels and intelligently listens to your active selections in the CVAT sidebar, switching the target object seamlessly.
 * 🗑️ **Range Deletion:** Clean up messy AI or manual annotations with a single click within a specific frame range to quickly retry prompts.
+* ✍🏻 **Range Label Updating:** Update the label of objects from a `Start` frame to an `End` frame.
 * 💾 **Auto-Save & Hard Reload Sync:** Automatically clicks CVAT's "Save" button to commit your manual edits before running AI inference. It then flawlessly refreshes the CVAT UI via URL parameters to fetch and display the new AI-generated polygons from the database.
 * 🧠 **State Persistence:** Utilizes browser `localStorage` to remember your selected Object IDs and target frames even after the page reloads.
 
@@ -26,6 +27,9 @@ The project consists of two main components:
 ---
 
 ## 🚀 Installation & Setup
+
+### 0. Install CVAT and Run the Web-based Annotator
+Clone the repo and run the Docker: [CVAT](https://github.com/cvat-ai/cvat)
 
 ### 1. Backend Server Setup
 Ensure you have a machine with a compatible GPU (NVIDIA) to run SAM 3 smoothly.
@@ -71,7 +75,7 @@ To inject the control panel into CVAT, we use **Tampermonkey**, a popular usersc
 ## 🕹️ How to Use
 
 1.  Open your CVAT Task/Job in the browser.
-2.  Click the `🤖 Start SAM3 Plugin` bookmark in your bookmarks bar. The floating panel will instantly appear.
+2.  The **Tampermonkey** will recognize the IP, then the floating panel will appear.
 3.  Draw a starting bounding box or polygon for your target object in CVAT.
 4.  The plugin will automatically detect your actively selected object. (You can also manually click **Sync Labels**).
 5.  Choose your action:
@@ -79,6 +83,7 @@ To inject the control panel into CVAT, we use **Tampermonkey**, a popular usersc
       * **Search (Text Query):** Type a text prompt and let SAM 3 find the object in the *current* frame.
       * **Propagate Range:** Enter a Start and End frame, then let the AI track the object across the sequence.
       * **Delete:** Remove all annotations for the target object within the specified frame range.
+      * **Change Object Label:** Change the label of annotations from object A to B within the specified frame range.
 6.  The plugin will automatically save your current work, trigger the backend AI, and reload the page to display the results\!
 
 ## 🤝 Contributing
