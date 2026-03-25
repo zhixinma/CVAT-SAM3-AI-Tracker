@@ -11,8 +11,8 @@ from collections import defaultdict
 
 # CVAT & Environment Configurations
 CVAT_URL = "http://10.4.4.24:8080"
-USERNAME = "username"
-PASSWORD = "password"
+USERNAME = "zhixinma"
+PASSWORD = "dv2W4VTDYxFrsLr"
 HF_MODEL  = "facebook/sam3"
 HOME_PATH = os.path.expanduser("~")
 VIDEO_DIR = os.path.join(HOME_PATH, "data/SCVOS/dataset/videos_fps6/videos")
@@ -20,6 +20,7 @@ VIDEO_DIR = os.path.join(HOME_PATH, "data/SCVOS/dataset/videos_fps6/videos")
 
 def calculate_iou(poly1, poly2, width, height):
     """
+    计算两个 Polygon 之间的 Intersection over Union (IoU)
     poly1, poly2: flat lists [x1, y1, x2, y2, ...]
     """
     mask1 = np.zeros((height, width), dtype=np.uint8)
@@ -39,6 +40,9 @@ def calculate_iou(poly1, poly2, width, height):
     return intersection / union
 
 def get_polygon_from_cvat_shape(shape):
+    """
+    将 CVAT 的不同 Shape 类型统一转换为 flat polygon points
+    """
     stype = str(shape.type)
     if stype == "polygon":
         return shape.points
@@ -49,6 +53,10 @@ def get_polygon_from_cvat_shape(shape):
 
 
 def filter_polygons_by_iou(new_shapes, existing_shapes, width, height, iou_threshold=0.5):
+    """
+    考虑每个 frame 上所有的 polygons 的 overlap 情况。优先保留原有的 annotation。
+    针对同一帧的新生成 polygon：如果 polygon A 的 95% 以上被 polygon B 覆盖，则删掉 polygon A。
+    """
     existing_masks = {}
     if existing_shapes:
         for shape in existing_shapes:
@@ -74,6 +82,7 @@ def filter_polygons_by_iou(new_shapes, existing_shapes, width, height, iou_thres
             label_id = new_shape.label_id
             discard = False
 
+            # 栅格化新生成的 Polygon
             new_mask = np.zeros((height, width), dtype=np.uint8)
             pts = np.array(new_shape.points, dtype=np.int32).reshape(-1, 2)
             cv2.fillPoly(new_mask, [pts], 1)
@@ -91,13 +100,16 @@ def filter_polygons_by_iou(new_shapes, existing_shapes, width, height, iou_thres
                 iou = intersection / union if union > 0 else 0
                 io_new = intersection / new_area if new_area > 0 else 0
 
+                # 判定规则：
+                # 1. 整体 IoU 大于阈值 (e.g., > 0.5)
+                # 2. 或者新生成的 Polygon 有 70% 以上的面积和原有 Mask 重合
                 if iou > iou_threshold or io_new > 0.7:
                     discard = True
 
             if discard:
                 continue
 
-            # 防止一个物体在传播时因为模型不确定性产生了两个高度相似的区域
+            shapes_to_remove = []
             for kept_shape in kept_in_frame:
                 if kept_shape.label_id != label_id:
                     continue
@@ -105,16 +117,29 @@ def filter_polygons_by_iou(new_shapes, existing_shapes, width, height, iou_thres
                 kept_mask = np.zeros((height, width), dtype=np.uint8)
                 k_pts = np.array(kept_shape.points, dtype=np.int32).reshape(-1, 2)
                 cv2.fillPoly(kept_mask, [k_pts], 1)
+                kept_area = kept_mask.sum()
 
+                # 计算交集和覆盖率
                 intersection = np.logical_and(new_mask, kept_mask).sum()
-                union = new_area + kept_mask.sum() - intersection
+                union = new_area + kept_area - intersection
                 iou = intersection / union if union > 0 else 0
 
-                if iou > 0.8: # 内部去重阈值设高一些
+                io_new = intersection / new_area if new_area > 0 else 0
+                io_kept = intersection / kept_area if kept_area > 0 else 0
+
+                # Rule 1：如果两个 polygon 高度重合，或者【新的 Polygon 95% 以上被已保留的覆盖】，则丢弃新的
+                if iou > 0.8 or io_new >= 0.80:
                     discard = True
                     break
 
+                # Rule 2：如果【已保留的 Polygon 95% 以上被新的 Polygon 覆盖】，则准备删掉旧的
+                if io_kept >= 0.80:
+                    shapes_to_remove.append(kept_shape)
+
+            # 如果新的 Polygon 没有被丢弃，则将其加入保留列表，并剔除被它覆盖掉的旧 Polygon
             if not discard:
+                for s_remove in shapes_to_remove:
+                    kept_in_frame.remove(s_remove)
                 kept_in_frame.append(new_shape)
 
         filtered_shapes.extend(kept_in_frame)
@@ -466,6 +491,46 @@ class SAM3CVATPipeline:
         print(f"[INFO] Successfully deleted {len(shapes_to_delete)} shapes.")
 
         return len(shapes_to_delete)
+
+    def change_label_range(self, job_id, start_frame, end_frame, object_src, object_tgt):
+        print(f"\n[MODE 6] Changing label from {object_src} to {object_tgt} between frames {start_frame}-{end_frame}.")
+        job = self.client.jobs.retrieve(job_id)
+
+        # 获取当前的 annotations
+        annotations = job.get_annotations()
+
+        # 找出范围内属于 object_src 的 shapes，并将其 label_id 替换为 object_tgt
+        shapes_to_update = []
+        for s in annotations.shapes:
+            if s.label_id == object_src and start_frame <= s.frame <= end_frame:
+                shapes_to_update.append(
+                    models.LabeledShapeRequest(
+                        id=s.id,              # 保留原有的 ID
+                        frame=s.frame,
+                        label_id=object_tgt,  # 替换为新的 target label
+                        type=s.type,
+                        points=s.points
+                    )
+                )
+
+        if not shapes_to_update:
+            print(f"[INFO] No shapes found to update for object {object_src} in range {start_frame}-{end_frame}.")
+            return 0
+
+        update_request = models.PatchedLabeledDataRequest(
+            version=annotations.version,
+            tags=[],
+            shapes=shapes_to_update,
+            tracks=[]
+        )
+
+        class CVATUpdateAction:
+            value = "update"
+
+        job.update_annotations(update_request, action=CVATUpdateAction)
+        print(f"[INFO] Successfully updated label for {len(shapes_to_update)} shapes.")
+
+        return len(shapes_to_update)
 
     def track_full_video(self, job_id, object_id):
         print(f"\n[MODE 3] Full video track for object {object_id} in job {job_id}.")

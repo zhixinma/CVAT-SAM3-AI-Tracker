@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CVAT SAM3 AI Tracker
 // @namespace    http://tampermonkey.net/
-// @version      2.8
-// @description  Unified Object ID, Smart Auto-Select, Auto-Save, Delete Range & Clean UI
+// @version      2.9
+// @description  Unified Object ID, Auto-Select, Auto-Save, Range Tools (Propagate/Delete/Change Label)
 // @author       Zhixin MA
 // @include      *
 // @grant        none
@@ -92,9 +92,16 @@
                         <span style="margin-left:5px;">End:</span> <input type="number" id="sam-end" style="${inputStyle}">
                         <button id="sam-btn-set-end" style="cursor:pointer; background:none; border:none;">${refreshIcon}</button>
                     </div>
-                    <div style="display: flex; gap: 8px;">
+
+                    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
                         <button id="sam-btn-range" style="${btnStyle} flex: 2;">Propagate Range</button>
-                        <button id="sam-btn-delete-range" style="${btnStyle} flex: 1; background: #ffebee; color: #c62828; border-color: #ef9a9a;" title="Delete all annotations for this object in range">Delete</button>
+                        <button id="sam-btn-delete-range" style="${btnStyle} flex: 1; background: #ffebee; color: #c62828; border-color: #ef9a9a;" title="Delete all annotations for Target Object in range">Delete</button>
+                    </div>
+
+                    <div style="display: flex; gap: 8px; align-items: center; border-top: 1px dashed #eee; padding-top: 8px;">
+                        <span style="font-weight: bold; color: #666; font-size: 12px;">To:</span>
+                        <select id="sam-target-obj-id" style="${selectStyle} background: #fff8e1; border-color: #ffca28; color: #e65100; flex: 2;"><option value="">Select label...</option></select>
+                        <button id="sam-btn-change-label" style="${btnStyle} flex: 1; background: #fff3e0; color: #e65100; border-color: #ffcc80;" title="Change Target Object to this new label">Change</button>
                     </div>
                 </div>
 
@@ -163,7 +170,10 @@
                 data.labels.forEach(lbl => { optionsHTML += `<option value="${lbl.id}" data-name="${lbl.name.toLowerCase()}">${lbl.name} (ID: ${lbl.id})</option>`; });
 
                 const selectGlobal = document.getElementById('sam-global-obj-id');
+                const selectTarget = document.getElementById('sam-target-obj-id'); // 新增的目标下拉框
+
                 selectGlobal.innerHTML = optionsHTML;
+                selectTarget.innerHTML = '<option value="">Select label...</option>' + optionsHTML; // 默认空选项
 
                 const savedObj = localStorage.getItem('sam3_saved_obj');
                 if (savedObj) {
@@ -252,7 +262,7 @@
 
         document.getElementById('sam-btn-search').onclick = async () => {
             const j = getJobId(), q = document.getElementById('sam-query').value, o = document.getElementById('sam-global-obj-id').value;
-            const f = getCurrentFrame(); // 强制使用当前帧
+            const f = getCurrentFrame();
 
             if(!o || !q) return alert("Missing text prompt or object.");
             await saveCvatAnnotations();
@@ -288,6 +298,27 @@
             setStatus(`🗑️ Deleting frames ${s} to ${e}...`, "#c62828");
             try {
                 const res = await fetch(`${API_BASE}/delete_range`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({job_id: j, start_frame: parseInt(s), end_frame: parseInt(e), object_id: parseInt(o)}) });
+                if(res.ok) forceReloadAtFrame(s);
+                else throw new Error();
+            } catch(err) { setStatus("❌ Connection Error", "#d32f2f"); }
+        };
+
+        document.getElementById('sam-btn-change-label').onclick = async () => {
+            const j = getJobId(), s = document.getElementById('sam-start').value, e = document.getElementById('sam-end').value;
+            const o_src = document.getElementById('sam-global-obj-id').value;
+            const o_tgt = document.getElementById('sam-target-obj-id').value;
+
+            if(!o_src || !o_tgt) return alert("Please select both Target Object and a new Label.");
+            if(o_src === o_tgt) return alert("Target Object and new Label cannot be the same.");
+            if(!s || !e) return alert("Invalid Start/End frames.");
+
+            if(!confirm(`⚠️ Confirm Label Change:\n\nChange all annotations from current Target Object to the new label between frames ${s} and ${e}?`)) return;
+
+            await saveCvatAnnotations();
+
+            setStatus(`🔄 Changing labels ${s} to ${e}...`, "#e65100");
+            try {
+                const res = await fetch(`${API_BASE}/change_label_range`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({job_id: j, start_frame: parseInt(s), end_frame: parseInt(e), object_src: parseInt(o_src), object_tgt: parseInt(o_tgt)}) });
                 if(res.ok) forceReloadAtFrame(s);
                 else throw new Error();
             } catch(err) { setStatus("❌ Connection Error", "#d32f2f"); }
